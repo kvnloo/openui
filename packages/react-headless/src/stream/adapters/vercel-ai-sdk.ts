@@ -96,6 +96,27 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
         }
       | undefined;
 
+    // AI SDK reasoning chunks have their own part IDs. Keep their lifecycle
+    // separate from the step's normal assistant text message.
+    let reasoningMessageId: string | undefined;
+
+    const finishReasoning = (): AGUIEvent | undefined => {
+      if (!reasoningMessageId) return;
+      const messageId = reasoningMessageId;
+      reasoningMessageId = undefined;
+      return { type: EventType.REASONING_MESSAGE_END, messageId };
+    };
+
+    const beginReasoning = (messageId: string): AGUIEvent[] => {
+      if (reasoningMessageId === messageId) return [];
+      const events: AGUIEvent[] = [];
+      const end = finishReasoning();
+      if (end) events.push(end);
+      reasoningMessageId = messageId;
+      events.push({ type: EventType.REASONING_MESSAGE_START, messageId, role: "reasoning" });
+      return events;
+    };
+
     const startStepMessage = (preferredMessageId?: string): AGUIEvent | undefined => {
       if (!activeStep || activeStep.messageStarted) return;
 
@@ -141,6 +162,8 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
 
       switch (chunk.type) {
         case "start-step": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           const stepName = `vercel-ai-step-${++stepIndex}`;
           activeStep = { stepName, messageStarted: false, sawTools: false };
           yield {
@@ -151,6 +174,8 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
         }
 
         case "finish-step": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           const stepName = activeStep?.stepName ?? `vercel-ai-step-${++stepIndex}`;
           if (activeStep?.messageStarted && activeStep.messageId) {
             yield {
@@ -166,7 +191,29 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
           break;
         }
 
+        case "reasoning-start":
+          for (const event of beginReasoning(chunk.id)) yield event;
+          break;
+
+        case "reasoning-delta":
+          for (const event of beginReasoning(chunk.id)) yield event;
+          yield {
+            type: EventType.REASONING_MESSAGE_CONTENT,
+            messageId: chunk.id,
+            delta: chunk.delta,
+          };
+          break;
+
+        case "reasoning-end":
+          if (reasoningMessageId === chunk.id) {
+            const end = finishReasoning();
+            if (end) yield end;
+          }
+          break;
+
         case "text-start": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           for (const event of beginText(chunk.id)) yield event;
           if (!activeStep) {
             yield {
@@ -179,6 +226,8 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
         }
 
         case "text-delta": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           for (const event of beginText(chunk.id)) yield event;
           yield {
             type: EventType.TEXT_MESSAGE_CONTENT,
@@ -197,7 +246,9 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
           }
           break;
 
-        case "tool-input-start":
+        case "tool-input-start": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           if (!startedTools.has(chunk.toolCallId)) {
             const event = startStepMessage();
             if (event) yield event;
@@ -211,6 +262,7 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
             };
           }
           break;
+        }
 
         case "tool-input-delta":
           if (chunk.inputTextDelta) {
@@ -225,6 +277,8 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
 
         case "tool-input-available":
         case "tool-input-error": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           if (!startedTools.has(chunk.toolCallId)) {
             const event = startStepMessage();
             if (event) yield event;
@@ -277,14 +331,20 @@ export const vercelAIAdapter = (): StreamProtocolAdapter => ({
           );
           break;
 
-        case "error":
+        case "error": {
+          const priorReasoning = finishReasoning();
+          if (priorReasoning) yield priorReasoning;
           yield {
             type: EventType.RUN_ERROR,
             message: chunk.errorText,
           };
           return;
+        }
       }
     }
+
+    const trailingReasoning = finishReasoning();
+    if (trailingReasoning) yield trailingReasoning;
 
     if (activeStep?.messageStarted && activeStep.messageId) {
       yield {
