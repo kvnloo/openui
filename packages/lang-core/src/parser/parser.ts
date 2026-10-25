@@ -314,99 +314,58 @@ function skipString(input: string, start: number): number {
   return i; // return length if string was unclosed
 }
 
-/** Extract code from markdown fences, or return as-is if no fences found.
- *  String-context-aware: skips ``` inside double-quoted strings. */
-export function stripFences(input: string): string {
-  const blocks: string[] = [];
-  let i = 0;
-
+/** Locate a line-start fence. Quotes only shield fence markers inside code, not prose. */
+function findFence(input: string, from: number, insideFence: boolean): number {
+  let i = from;
+  let statementLine = false;
   while (i < input.length) {
-    // Scan for opening ``` while tracking string context
-    let fenceStart = -1;
-    while (i < input.length) {
-      const nextI = skipString(input, i);
-      if (nextI > i) {
-        i = nextI;
-        continue;
-      }
-
-      const c = input[i];
-      if (
-        c === "`" &&
-        i + 1 < input.length &&
-        input[i + 1] === "`" &&
-        i + 2 < input.length &&
-        input[i + 2] === "`"
-      ) {
-        fenceStart = i;
-        break;
-      }
+    if (i === 0 || input[i - 1] === "\n") {
+      if (input.startsWith("```", i)) return i;
+      // In unfenced OpenUI source, a quoted string may span multiple lines.
+      // Prose (e.g. a stray inch mark) must never shield the next real fence.
+      statementLine = /^[$A-Za-z_][\w$]*[ \t]*=/.test(input.slice(i));
+    }
+    if (input[i] === '"' && (insideFence || statementLine)) {
+      i = skipString(input, i);
+    } else {
       i++;
     }
+  }
+  return -1;
+}
 
-    if (fenceStart === -1) break;
+/**
+ * Extract every line-start Markdown code fence, ignoring surrounding prose.
+ * Closing fences inside double-quoted code strings are ignored. An unfinished
+ * fence contributes the remaining stream text; without a fence, return raw code.
+ */
+export function stripFences(input: string): string {
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < input.length) {
+    const open = findFence(input, cursor, false);
+    if (open === -1) break;
 
-    // Skip language tag until newline
-    let j = fenceStart + 3;
-    while (j < input.length && input[j] !== "\n") j++;
-    if (j >= input.length) {
-      // No newline after opening fence (streaming) — take everything after fence marker + lang tag
-      blocks.push(input.slice(fenceStart + 3).replace(/^[^\n]*\n?/, ""));
-      i = input.length;
+    const tagEnd = input.indexOf("\n", open + 3);
+    if (tagEnd === -1) {
+      // Language tag still streaming; no program body yet.
+      blocks.push("");
       break;
     }
-    j++; // skip the newline
 
-    // Scan for closing ``` while tracking string context
-    let closePos = -1;
-    let k = j;
-    while (k < input.length) {
-      const nextK = skipString(input, k);
-      if (nextK > k) {
-        k = nextK;
-        continue;
-      }
-      const c = input[k];
-      if (
-        c === "`" &&
-        k + 1 < input.length &&
-        input[k + 1] === "`" &&
-        k + 2 < input.length &&
-        input[k + 2] === "`"
-      ) {
-        closePos = k;
-        break;
-      }
-      k++;
+    const bodyStart = tagEnd + 1;
+    const close = findFence(input, bodyStart, true);
+    if (close === -1) {
+      blocks.push(input.slice(bodyStart));
+      break;
     }
 
-    if (closePos !== -1) {
-      blocks.push(input.slice(j, closePos));
-      i = closePos + 3;
-    } else {
-      // No closing fence found (streaming) — take everything after opening fence
-      blocks.push(input.slice(j));
-      i = input.length;
-    }
+    blocks.push(input.slice(bodyStart, close));
+    const closingEnd = input.indexOf("\n", close + 3);
+    cursor = closingEnd === -1 ? input.length : closingEnd + 1;
   }
 
-  if (blocks.length > 0) return blocks.join("\n");
-
-  // Fallback: if input starts with ``` but wasn't matched (e.g. no newline after fence)
-  if (input.startsWith("```")) {
-    let j = 3;
-    while (j < input.length && input[j] !== "\n") j++;
-    const start = j < input.length ? j + 1 : 3;
-    // Try to strip trailing ```
-    const body = input.slice(start);
-    const trailingFence = body.lastIndexOf("```");
-    if (trailingFence !== -1) {
-      return body.slice(0, trailingFence);
-    }
-    return body;
-  }
-
-  return input;
+  return blocks.length > 0 ? blocks.join("\n") : input;
 }
 
 /** Strip // and # line comments outside of strings (handles both " and ' delimiters). */
