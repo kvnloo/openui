@@ -615,3 +615,91 @@ describe("vercelAIAdapter", () => {
     );
   });
 });
+
+describe("vercelAIAdapter reasoning normalization (#1413)", () => {
+  const isReasoning = (event: AGUIEvent) =>
+    event.type === EventType.REASONING_MESSAGE_START ||
+    event.type === EventType.REASONING_MESSAGE_CONTENT ||
+    event.type === EventType.REASONING_MESSAGE_END;
+
+  it("emits reasoning lifecycle before text in the same model step", async () => {
+    const events = await parse(
+      sse({ type: "start-step" }) +
+        sse({ type: "reasoning-start", id: "reason-1" }) +
+        sse({ type: "reasoning-delta", id: "reason-1", delta: "Check the input. " }) +
+        sse({ type: "reasoning-delta", id: "reason-1", delta: "Done." }) +
+        sse({ type: "reasoning-end", id: "reason-1" }) +
+        sse({ type: "text-start", id: "answer-1" }) +
+        sse({ type: "text-delta", id: "answer-1", delta: "Answer" }) +
+        sse({ type: "text-end", id: "answer-1" }) +
+        sse({ type: "finish-step" }),
+    );
+
+    expect(events.filter(isReasoning)).toEqual([
+      { type: EventType.REASONING_MESSAGE_START, messageId: "reason-1", role: "reasoning" },
+      { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason-1", delta: "Check the input. " },
+      { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason-1", delta: "Done." },
+      { type: EventType.REASONING_MESSAGE_END, messageId: "reason-1" },
+    ]);
+    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+      events.findIndex((event) => event.type === EventType.TEXT_MESSAGE_START),
+    );
+  });
+
+  it("closes an incomplete reasoning part when ordinary text starts", async () => {
+    const events = await parse(
+      sse({ type: "start-step" }) +
+        sse({ type: "reasoning-start", id: "reason-2" }) +
+        sse({ type: "reasoning-delta", id: "reason-2", delta: "Thinking" }) +
+        sse({ type: "text-start", id: "answer-2" }) +
+        sse({ type: "text-delta", id: "answer-2", delta: "Result" }) +
+        sse({ type: "text-end", id: "answer-2" }) +
+        sse({ type: "finish-step" }),
+    );
+    expect(events.filter(isReasoning).map((event) => event.type)).toEqual([
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_END,
+    ]);
+    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+      events.findIndex((event) => event.type === EventType.TEXT_MESSAGE_START),
+    );
+  });
+
+  it("closes reasoning-only steps without generating empty text messages", async () => {
+    const events = await parse(
+      sse({ type: "start-step" }) +
+        sse({ type: "reasoning-start", id: "reason-3" }) +
+        sse({ type: "reasoning-delta", id: "reason-3", delta: "Thought" }) +
+        sse({ type: "finish-step" }),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      EventType.STEP_STARTED,
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_END,
+      EventType.STEP_FINISHED,
+    ]);
+  });
+
+  it("ends reasoning before tool input instead of swallowing tool activity", async () => {
+    const events = await parse(
+      sse({ type: "start-step" }) +
+        sse({ type: "reasoning-start", id: "reason-4" }) +
+        sse({ type: "reasoning-delta", id: "reason-4", delta: "Need a search" }) +
+        sse({
+          type: "tool-input-available",
+          toolCallId: "search-1",
+          toolName: "search",
+          input: { query: "docs" },
+        }) +
+        sse({ type: "finish-step" }),
+    );
+    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+      events.findIndex((event) => event.type === EventType.TOOL_CALL_START),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: EventType.TOOL_CALL_END, toolCallId: "search-1" }),
+    );
+  });
+});
