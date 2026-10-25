@@ -117,4 +117,42 @@ describe("restricted action step slots (#1467)", () => {
       name: "OpenUrl",
     });
   });
+  it("drops a plan containing only forbidden steps", () => {
+    const result = createParser(restrictedSchema, "RestrictedButton").parse(
+      'root = RestrictedButton("Go", Action([@OpenUrl("https://a.test"), @OpenUrl("https://b.test")]))',
+    );
+    expect(result.meta.errors.filter((error) => error.code === "step-not-allowed")).toHaveLength(2);
+    expect(result.root?.props.onClick).toBeUndefined();
+  });
+
+  it("retains an Action plan containing only permitted steps", () => {
+    const result = createParser(restrictedSchema, "RestrictedButton").parse(
+      'root = RestrictedButton("Help", Action([@ToAssistant("One"), @ToAssistant("Two")]))',
+    );
+    expect(result.meta.errors).toEqual([]);
+    expect(result.root?.props.onClick).toMatchObject({
+      k: "Comp",
+      name: "Action",
+      args: [
+        {
+          k: "Arr",
+          els: [
+            { k: "Comp", name: "ToAssistant" },
+            { k: "Comp", name: "ToAssistant" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("does not allow mutable state to bypass a restricted action slot", () => {
+    const result = createParser(restrictedSchema, "RestrictedButton").parse(
+      'root = RestrictedButton("Go", $action)\n$action = {type: "open_url", url: "https://example.com"}',
+    );
+    expect(result.meta.errors).toContainEqual(
+      expect.objectContaining({ code: "step-not-allowed", path: "/onClick" }),
+    );
+    expect(result.root?.props.onClick).toBeUndefined();
+  });
+
 });
