@@ -1,4 +1,5 @@
-import { isASTNode } from "./ast";
+import { isASTNode, type ASTNode } from "./ast";
+import { ACTION_STEPS } from "./builtins";
 import {
   isElementNode,
   type ElementNode,
@@ -138,6 +139,7 @@ export type ValidationIssue =
   | { code: "inline-reserved" }
   | { code: "excess-args"; declared: number; got: number }
   | { code: "unknown-function" }
+  | { code: "step-not-allowed"; allowed: string[]; actual: string }
   | { code: "no-root"; reason: "missing" | "not-component" | "fallback" };
 
 function validationMessage(component: string, path: string, issue: ValidationIssue): string {
@@ -156,6 +158,8 @@ function validationMessage(component: string, path: string, issue: ValidationIss
       return `${component} takes ${issue.declared} arg(s), got ${issue.got} (${issue.got - issue.declared} excess dropped)`;
     case "unknown-function":
       return `Unknown function "@${component}": not a built-in or action step. The call evaluates to null`;
+    case "step-not-allowed":
+      return `Action step "${issue.actual}" is not allowed in field "${path}". Allowed: ${issue.allowed.map((name) => `@${name}`).join(", ")}`;
     case "no-root":
       if (issue.reason === "not-component") return "root does not evaluate to a component";
       if (issue.reason === "fallback") {
@@ -230,6 +234,84 @@ function validateElementPosition(
 /** The `$ref` names a slot allows: one for `$ref`, several for anyOf/oneOf. */
 function slotRefNames(s: Record<string, unknown>): (string | undefined)[] {
   return ((s["anyOf"] ?? s["oneOf"] ?? [s]) as Record<string, unknown>[]).map(refName);
+}
+
+/** Restricted built-in action refs; generic ActionExpression remains unrestricted. */
+const RESTRICTED_ACTION_TYPES: Readonly<Record<string, string>> = {
+  OpenUrl: ACTION_STEPS.OpenUrl,
+  ToAssistant: ACTION_STEPS.ToAssistant,
+};
+
+/** Return the allowed names only when ALL alternatives are restricted action refs. */
+function restrictedActionNames(s: Record<string, unknown>): Set<string> | null {
+  const refs = slotRefNames(s);
+  if (
+    refs.length === 0 ||
+    refs.some(
+      (name) =>
+        name === undefined || !Object.prototype.hasOwnProperty.call(RESTRICTED_ACTION_TYPES, name),
+    )
+  ) {
+    return null;
+  }
+  return new Set(refs.filter((name): name is string => name !== undefined));
+}
+
+/** A restricted action slot must not pass model-written steps outside its allowlist to runtime. */
+function validateRestrictedAction(
+  value: unknown,
+  allowed: ReadonlySet<string>,
+  component: string,
+  path: string,
+  ctx: MaterializeCtx,
+): unknown {
+  const forbidden = (actual: string): typeof INVALID => {
+    pushValidationIssue(ctx, component, path, {
+      code: "step-not-allowed",
+      allowed: [...allowed],
+      actual,
+    });
+    return INVALID;
+  };
+
+  if (isASTNode(value)) {
+    if (value.k === "Comp" && value.name === "Action") {
+      const steps = value.args[0];
+      if (value.args.length !== 1 || steps?.k !== "Arr") return forbidden("Action");
+
+      const accepted: ASTNode[] = [];
+      for (let i = 0; i < steps.els.length; i++) {
+        const step = steps.els[i]!;
+        if (step.k === "Comp" && allowed.has(step.name)) {
+          accepted.push(step);
+        } else {
+          pushValidationIssue(ctx, component, `${path}/${i}`, {
+            code: "step-not-allowed",
+            allowed: [...allowed],
+            actual: step.k === "Comp" ? step.name : step.k,
+          });
+        }
+      }
+
+      if (accepted.length === 0) return INVALID;
+      if (accepted.length === steps.els.length) return value;
+      return {
+        ...value,
+        args: [{ ...steps, els: accepted }],
+      };
+    }
+    return value.k === "Comp" && allowed.has(value.name)
+      ? value
+      : forbidden(value.k === "Comp" ? value.name : value.k);
+  }
+
+  // Legacy structured actions are still supported, but may not bypass a restricted slot.
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const type = (value as Record<string, unknown>).type;
+    if ([...allowed].some((name) => RESTRICTED_ACTION_TYPES[name] === type)) return value;
+    return forbidden(typeof type === "string" ? type : "object");
+  }
+  return forbidden(jsType(value));
 }
 
 /** True when every option of the slot is a `$ref` to a component. */
@@ -383,7 +465,9 @@ export function validateSchemaValue(
   const s = schema as Record<string, unknown>;
   // Absence is handled by required checks on the parent; skip null/undefined.
   if (value == null) return value;
-  // Dynamic runtime expressions ($var, builtins) resolve later — don't flag.
+  const restricted = restrictedActionNames(s);
+  if (restricted) return validateRestrictedAction(value, restricted, component, path, ctx);
+  // Other dynamic runtime expressions ($var, builtins) resolve later — don't flag.
   if (isASTNode(value)) return value;
   // Child components: only their position is checked here.
   if (isElementNode(value)) {

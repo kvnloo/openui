@@ -112,6 +112,7 @@ export type ValidationErrorCode =
   | "excess-args"
   | "type-mismatch"
   | "unknown-function"
+  | "step-not-allowed"
   | "no-root";
 
 /**
