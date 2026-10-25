@@ -712,4 +712,23 @@ describe("vercelAIAdapter reasoning normalization (#1413)", () => {
       expect.objectContaining({ type: EventType.TOOL_CALL_END, toolCallId: "search-1" }),
     );
   });
+  it("ends reasoning before a terminal stream error", async () => {
+    const events = await parse(
+      sse({ type: "start-step" }) +
+        sse({ type: "reasoning-start", id: "reason-error" }) +
+        sse({ type: "reasoning-delta", id: "reason-error", delta: "Partial" }) +
+        sse({ type: "error", errorText: "Provider unavailable" }) +
+        sse({ type: "text-start", id: "text-after-error" }),
+    );
+    expect(events.filter(isReasoning).map((event) => event.type)).toEqual([
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_END,
+    ]);
+    expect(events[events.length - 1]).toEqual({
+      type: EventType.RUN_ERROR,
+      message: "Provider unavailable",
+    });
+  });
+
 });
