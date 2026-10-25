@@ -3,6 +3,7 @@ import type {
   ResponseStreamEvent,
 } from "openai/resources/responses/responses";
 import { AGUIEvent, EventType, StreamProtocolAdapter } from "../../types";
+import { sseDataLine } from "./_shared/sseLines";
 
 /** A tool result's `output` as a string (JSON-encoded if structured, "" if absent). */
 const stringifyOutput = (output: unknown): string =>
@@ -32,8 +33,8 @@ export const openAIResponsesAdapter = (): StreamProtocolAdapter => ({
       buffer = done ? "" : (lines.pop() ?? "");
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
+        const data = sseDataLine(line);
+        if (data === null) continue;
         if (!data || data === "[DONE]") continue;
 
         try {
