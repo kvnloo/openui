@@ -35,7 +35,9 @@ describe("spec-compliant SSE data fields (#1312)", () => {
   it("parses AG-UI events with no space, split network chunks, and CRLF", async () => {
     const body = '{"type":"RUN_ERROR","message":"provider error"}';
     const events = await collect(
-      agUIAdapter().parse(responseFromChunks(["da", "ta:", body.slice(0, 13), body.slice(13) + "\r\n\r\n"])),
+      agUIAdapter().parse(
+        responseFromChunks(["da", "ta:", body.slice(0, 13), body.slice(13) + "\r\n\r\n"]),
+      ),
     );
     expect(events).toEqual([{ type: EventType.RUN_ERROR, message: "provider error" }]);
   });
