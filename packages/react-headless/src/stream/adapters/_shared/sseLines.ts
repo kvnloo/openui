@@ -38,3 +38,11 @@ export async function* sseLineIterator(response: Response): AsyncGenerator<strin
   // complete final line sitting in the buffer.
   if (buffer.trim()) yield buffer;
 }
+
+/**
+ * Extract an SSE data field. The space after ":" is optional per the SSE spec;
+ * providers and gateways may legally send either "data:{...}" or "data: {...}".
+ */
+export function sseDataLine(line: string): string | null {
+  return line.startsWith("data:") ? line.slice(5).trim() : null;
+}
