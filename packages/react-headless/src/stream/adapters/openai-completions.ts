@@ -1,6 +1,6 @@
 import type { ChatCompletionChunk } from "openai/resources/chat/completions";
 import { AGUIEvent, EventType, StreamProtocolAdapter } from "../../types";
-import { sseLineIterator } from "./_shared/sseLines";
+import { sseDataLine, sseLineIterator } from "./_shared/sseLines";
 
 export const openAIAdapter = (): StreamProtocolAdapter => ({
   async *parse(response: Response): AsyncIterable<AGUIEvent> {
@@ -9,8 +9,8 @@ export const openAIAdapter = (): StreamProtocolAdapter => ({
     let messageStarted = false;
 
     for await (const line of sseLineIterator(response)) {
-      if (!line.startsWith("data: ")) continue;
-      const data = line.slice(6).trim();
+      const data = sseDataLine(line);
+      if (data === null) continue;
       if (!data || data === "[DONE]") continue;
 
       try {
