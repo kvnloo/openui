@@ -1,6 +1,5 @@
-import { isASTNode } from "./ast";
+import { isASTNode, type ASTNode } from "./ast";
 import { ACTION_STEPS } from "./builtins";
-import type { ASTNode } from "./ast";
 import {
   isElementNode,
   type ElementNode,
