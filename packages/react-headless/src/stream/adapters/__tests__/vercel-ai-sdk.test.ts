@@ -637,11 +637,17 @@ describe("vercelAIAdapter reasoning normalization (#1413)", () => {
 
     expect(events.filter(isReasoning)).toEqual([
       { type: EventType.REASONING_MESSAGE_START, messageId: "reason-1", role: "reasoning" },
-      { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason-1", delta: "Check the input. " },
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "reason-1",
+        delta: "Check the input. ",
+      },
       { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason-1", delta: "Done." },
       { type: EventType.REASONING_MESSAGE_END, messageId: "reason-1" },
     ]);
-    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+    expect(
+      events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END),
+    ).toBeLessThan(
       events.findIndex((event) => event.type === EventType.TEXT_MESSAGE_START),
     );
   });
@@ -661,7 +667,9 @@ describe("vercelAIAdapter reasoning normalization (#1413)", () => {
       EventType.REASONING_MESSAGE_CONTENT,
       EventType.REASONING_MESSAGE_END,
     ]);
-    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+    expect(
+      events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END),
+    ).toBeLessThan(
       events.findIndex((event) => event.type === EventType.TEXT_MESSAGE_START),
     );
   });
@@ -695,7 +703,9 @@ describe("vercelAIAdapter reasoning normalization (#1413)", () => {
         }) +
         sse({ type: "finish-step" }),
     );
-    expect(events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END)).toBeLessThan(
+    expect(
+      events.findIndex((event) => event.type === EventType.REASONING_MESSAGE_END),
+    ).toBeLessThan(
       events.findIndex((event) => event.type === EventType.TOOL_CALL_START),
     );
     expect(events).toContainEqual(
