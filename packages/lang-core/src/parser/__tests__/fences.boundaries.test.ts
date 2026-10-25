@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createParser, createStreamingParser } from "../parser";
-import { stripFences } from "../parser";
+import { createParser, createStreamingParser, stripFences } from "../parser";
 import type { LibraryJSONSchema } from "../types";
 
 const schema: LibraryJSONSchema = {
